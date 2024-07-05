@@ -1,1 +1,144 @@
+package platoon_1_6;
 
+
+ /*
+ INPUTS:
+ 0: Cut-in status
+ 1: Cut-in status modifier
+ 2: Distance to cut-in vehicle
+ 3: Relative speed of cut-in vehicle
+
+ OUTPUTS:
+ 0: Cut-in status
+ 1: Cut-in status modifier
+ 2: "DRIVER_BRAKE" (value between 0-100)
+ 3: accelerator pedal position
+ */
+ public class CutInBraker extends FunctionBlock {
+
+ public static final int SAMPLE_RATE = 10;
+
+ // hostVehicle mainly useful for debugging purposes
+ private Platoon_Vehicle hostVehicle;
+
+ private double initialDistance;
+ private double totalBrakeDistance;
+ private double margin = 0.5;
+ private double invMargin = 1 - margin;
+ // this is x_r_0 in PlatoonConfiguration. Maybe find a less hardcoded 
+method.
+ private double vehicleLength = 18;
+
+ public CutInBraker(Platoon_Vehicle hostV) {
+ hostVehicle = hostV;
+ }
+
+ @Override
+ public void run(long ticks) {
+ if (ticks % SAMPLE_RATE == 0) {
+ double[] inputs = readReg();
+ double[] outputs = buildOutputArray();
+ double status = inputs[0];
+ double modifier = inputs[1];
+ double distance = inputs[2];
+ double relSpeedKPH = inputs[3];
+ double relSpeed = relSpeedKPH / 3.6; // convert to m/s
+
+ if (status == CutInDetector.STATUS_NOT_CUT_IN_BRAKING) {
+
+ if (modifier == CutInDetector.MODIFIER_NO_CHANGE) {
+ // do nothing
+ } else if (modifier == 
+CutInDetector.MODIFIER_START_CUT_IN_BRAKING) {
+
+ initialDistance = distance;
+ double reducedDist = distance - vehicleLength;
+ totalBrakeDistance = invMargin * reducedDist;
+ double torque = calculateTorque(totalBrakeDistance, 
+relSpeed);
+
+ if (torque > Platoon_Vehicle.maxBrakeTorque) {
+ margin = 0.3;
+ invMargin = 1 - margin;
+
+ totalBrakeDistance = invMargin * reducedDist;
+ torque = calculateTorque(totalBrakeDistance, 
+relSpeed);
+ if (torque > Platoon_Vehicle.maxBrakeTorque) {
+ margin = 0.1;
+ invMargin = 1 - margin;
+ totalBrakeDistance = invMargin * reducedDist;
+ torque = calculateTorque(totalBrakeDistance, 
+relSpeed);
+ if (torque > Platoon_Vehicle.maxBrakeTorque) {
+ torque = Platoon_Vehicle.maxBrakeTorque;
+ }
+ }
+ }
+
+ double hostX = hostVehicle.register
+[Platoon_Vehicle.REGISTER_HOST_POSITION_X];
+ outputs[0] = 
+CutInDetector.STATUS_CURRENTLY_CUT_IN_BRAKING;
+ outputs[1] = CutInDetector.MODIFIER_NO_CHANGE;
+ outputs[2] = 100 * torque / 
+Platoon_Vehicle.maxBrakeTorque;
+ outputs[3] = 0;
+ writeReg(outputs);
+ } else if (modifier == 
+CutInDetector.MODIFIER_STOP_CUT_IN_BRAKING) {
+ // we shouldn't end up here
+ System.err.println("There's been some mistake. code 1");
+ }
+
+ } else if (status == 
+CutInDetector.STATUS_CURRENTLY_CUT_IN_BRAKING) {
+
+ if (modifier == CutInDetector.MODIFIER_NO_CHANGE) {
+// do stuff with updated info
+ double gapClosedBy = initialDistance - distance;
+ double remainingBrakeDistance = totalBrakeDistance - 
+gapClosedBy;
+ double acc = (relSpeed * relSpeed) / (2 * 
+remainingBrakeDistance);
+ double force = Platoon_Vehicle.getMass() * acc;
+ double torque = Platoon_Vehicle.getWheelRadius() * force;
+ if (torque > Platoon_Vehicle.maxBrakeTorque) {
+ torque = Platoon_Vehicle.maxBrakeTorque;
+ }
+ outputs[0] = 
+CutInDetector.STATUS_CURRENTLY_CUT_IN_BRAKING;
+ outputs[1] = CutInDetector.MODIFIER_NO_CHANGE;
+ outputs[2] = 100 * torque / 
+Platoon_Vehicle.maxBrakeTorque;
+ outputs[3] = 0;
+ writeReg(outputs);
+ } else if (modifier == 
+CutInDetector.MODIFIER_STOP_CUT_IN_BRAKING) {
+ outputs[0] = CutInDetector.STATUS_NOT_CUT_IN_BRAKING;
+ outputs[1] = CutInDetector.MODIFIER_NO_CHANGE;
+ outputs[2] = Platoon_Vehicle.initVal;
+ outputs[3] = 0;
+ writeReg(outputs);
+ } else if (modifier == 
+CutInDetector.MODIFIER_START_CUT_IN_BRAKING) {
+ // we shouldn't end up here either
+ System.err.println("There's been some mistake. code 2");
+ }
+ }
+}
+ }
+
+ private double calculateTorque(double brakeDist, double relSPD) {
+ double acc = (relSPD * relSPD) / (2 * brakeDist);
+ double force = Platoon_Vehicle.getMass() * acc;
+ double torque = Platoon_Vehicle.getWheelRadius() * force;
+ return torque;
+ }
+
+ @Override
+ public void reset(double initialSPDms) {
+
+ }
+
+}//CutInBraker
